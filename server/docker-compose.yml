@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  alert-bridge:
+    build: .
+    container_name: grafana-alert-bridge
+    restart: unless-stopped
+    ports:
+      # HTTP для вебхуков от AlertManager
+      - "8080:8080"
+      # WebSocket для клиентов
+      - "8081:8081"
+    environment:
+      # Можно переопределить через .env файл
+      - HTTP_PORT=${HTTP_PORT:-8080}
+      - WS_PORT=${WS_PORT:-8081}
+      - HOST=${HOST:-0.0.0.0}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Добавляем базовую аутентификацию (опционально)
+      - ENABLE_AUTH=${ENABLE_AUTH:-false}
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+    volumes:
+      # Для сохранения логов (опционально)
+      - ./logs:/app/logs
+      # Для конфигурации (опционально)
+      - ./config:/app/config
+    networks:
+      - monitoring-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  monitoring-network:
+    driver: bridge
+    name: monitoring-network
