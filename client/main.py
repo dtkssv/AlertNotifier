@@ -1,15 +1,18 @@
 """
 Desktop приложение для отображения алертов Grafana
 Подключается к VM-посреднику через WebSocket
+Поддерживает загрузку и выбор пользовательских звуков
 """
 import json
 import threading
 import time
-from datetime import datetime
-from typing import List, Dict, Any, Optional
 import os
 import sys
+import shutil
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 from pathlib import Path
+import hashlib
 
 import flet as ft
 from websocket import WebSocketApp
@@ -18,16 +21,138 @@ from PIL import Image, ImageDraw
 import pystray
 
 # Константы
-SOUND_ALERT = "alert.wav"  # Положите свой WAV файл в папку с приложением
+SOUND_ALERT = "alert.wav"
 SOUND_RESOLVED = "resolved.wav"
+SOUNDS_DIR = "sounds"  # Директория для хранения пользовательских звуков
 
 class AlertColors:
     """Цвета для разных уровней серьезности"""
     CRITICAL = ft.colors.RED_500
     HIGH = ft.colors.ORANGE_500
-    WARNING = ft.colors.YELLELLOW_700
+    WARNING = ft.colors.YELLOW_700
     INFO = ft.colors.BLUE_500
     RESOLVED = ft.colors.GREEN_500
+
+class SoundManager:
+    """Менеджер для работы со звуками"""
+    
+    def __init__(self):
+        self.sounds_dir = Path(SOUNDS_DIR)
+        self.sounds_dir.mkdir(exist_ok=True)
+        
+        # Копируем стандартные звуки если их нет
+        self._init_default_sounds()
+        
+        # Текущие выбранные звуки
+        self.current_alert_sound = "alert.wav"
+        self.current_resolved_sound = "resolved.wav"
+        
+    def _init_default_sounds(self):
+        """Инициализация стандартных звуков"""
+        default_sounds = {
+            "alert.wav": None,  # Если файла нет, будет использован системный звук
+            "resolved.wav": None
+        }
+        
+        # Если стандартных файлов нет, создаем пустые заглушки
+        # В реальном проекте можно добавить встроенные звуки
+    
+    def get_available_sounds(self) -> List[str]:
+        """Получить список доступных звуков"""
+        sounds = ["Без звука", "Системный звук"]
+        
+        # Добавляем файлы из директории sounds
+        for file in self.sounds_dir.glob("*.wav"):
+            sounds.append(file.name)
+        for file in self.sounds_dir.glob("*.mp3"):
+            sounds.append(file.name)
+            
+        return sounds
+    
+    def play_sound(self, sound_name: str, block: bool = False):
+        """Воспроизвести звук"""
+        if sound_name == "Без звука":
+            return
+            
+        try:
+            if sound_name == "Системный звук":
+                # Используем системный звук (beep)
+                print('\a')  # ASCII Bell
+                return
+                
+            sound_path = self.sounds_dir / sound_name
+            if sound_path.exists():
+                playsound.playsound(str(sound_path), block=block)
+        except Exception as e:
+            print(f"Error playing sound {sound_name}: {e}")
+    
+    def import_sound(self, file_path: str, custom_name: str = None) -> tuple[bool, str]:
+        """
+        Импортировать звуковой файл
+        Возвращает (успех, сообщение/имя файла)
+        """
+        try:
+            src_path = Path(file_path)
+            if not src_path.exists():
+                return False, "Файл не найден"
+            
+            # Проверяем расширение
+            if src_path.suffix.lower() not in ['.wav', '.mp3']:
+                return False, "Поддерживаются только файлы .wav и .mp3"
+            
+            # Генерируем имя для сохранения
+            if custom_name:
+                # Очищаем имя от недопустимых символов
+                safe_name = "".join(c for c in custom_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                if not safe_name:
+                    safe_name = src_path.stem
+            else:
+                safe_name = src_path.stem
+            
+            # Добавляем хеш для уникальности (если файл с таким именем уже есть)
+            dest_filename = f"{safe_name}{src_path.suffix}"
+            dest_path = self.sounds_dir / dest_filename
+            
+            # Если файл уже существует, добавляем число
+            counter = 1
+            while dest_path.exists():
+                dest_filename = f"{safe_name}_{counter}{src_path.suffix}"
+                dest_path = self.sounds_dir / dest_filename
+                counter += 1
+            
+            # Копируем файл
+            shutil.copy2(src_path, dest_path)
+            
+            return True, dest_filename
+            
+        except Exception as e:
+            return False, str(e)
+    
+    def delete_sound(self, sound_name: str) -> bool:
+        """Удалить звуковой файл"""
+        try:
+            if sound_name in ["Без звука", "Системный звук"]:
+                return False
+            
+            sound_path = self.sounds_dir / sound_name
+            if sound_path.exists():
+                sound_path.unlink()
+                return True
+        except Exception as e:
+            print(f"Error deleting sound {sound_name}: {e}")
+        return False
+    
+    def load_settings(self, settings: dict):
+        """Загрузить настройки звуков"""
+        self.current_alert_sound = settings.get('alert_sound', 'alert.wav')
+        self.current_resolved_sound = settings.get('resolved_sound', 'resolved.wav')
+    
+    def save_settings(self) -> dict:
+        """Сохранить настройки звуков"""
+        return {
+            'alert_sound': self.current_alert_sound,
+            'resolved_sound': self.current_resolved_sound
+        }
 
 class AlertClient:
     """Клиент для подключения к VM-посреднику"""
@@ -108,14 +233,245 @@ class AlertClient:
             except:
                 pass
 
+class SettingsDialog:
+    """Диалог настроек приложения"""
+    
+    def __init__(self, page: ft.Page, sound_manager: SoundManager, on_save_callback):
+        self.page = page
+        self.sound_manager = sound_manager
+        self.on_save_callback = on_save_callback
+        self.dialog = None
+        self.import_file_picker = ft.FilePicker(on_result=self.on_file_picked)
+        self.page.overlay.append(self.import_file_picker)
+        
+    def open(self):
+        """Открыть диалог настроек"""
+        
+        # Получаем список доступных звуков
+        available_sounds = self.sound_manager.get_available_sounds()
+        
+        # Создаем элементы управления
+        self.alert_sound_dropdown = ft.Dropdown(
+            label="Звук нового алерта",
+            options=[ft.dropdown.Option(sound) for sound in available_sounds],
+            value=self.sound_manager.current_alert_sound,
+            width=300,
+        )
+        
+        self.resolved_sound_dropdown = ft.Dropdown(
+            label="Звук разрешенного алерта",
+            options=[ft.dropdown.Option(sound) for sound in available_sounds],
+            value=self.sound_manager.current_resolved_sound,
+            width=300,
+        )
+        
+        # Список загруженных звуков
+        self.sounds_list = ft.ListView(
+            expand=True,
+            spacing=10,
+            padding=10,
+            height=200,
+        )
+        self.refresh_sounds_list()
+        
+        # Кнопка импорта
+        import_btn = ft.ElevatedButton(
+            "Загрузить свой звук",
+            icon=ft.icons.UPLOAD_FILE,
+            on_click=lambda _: self.import_file_picker.pick_files(
+                allow_multiple=False,
+                allowed_extensions=['wav', 'mp3']
+            )
+        )
+        
+        # Поле для тестирования звука
+        test_sound_btn = ft.ElevatedButton(
+            "Тест",
+            icon=ft.icons.PLAY_ARROW,
+            on_click=self.test_sound,
+        )
+        
+        # Кнопки сохранения/отмены
+        def save_settings(e):
+            # Сохраняем выбранные звуки
+            self.sound_manager.current_alert_sound = self.alert_sound_dropdown.value
+            self.sound_manager.current_resolved_sound = self.resolved_sound_dropdown.value
+            self.on_save_callback()
+            self.dialog.open = False
+            self.page.update()
+        
+        def cancel(e):
+            self.dialog.open = False
+            self.page.update()
+        
+        self.dialog = ft.AlertDialog(
+            title=ft.Text("Настройки"),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Звуковые уведомления", size=16, weight=ft.FontWeight.BOLD),
+                    ft.Row([
+                        self.alert_sound_dropdown,
+                        test_sound_btn,
+                    ]),
+                    self.resolved_sound_dropdown,
+                    ft.Divider(),
+                    ft.Text("Управление звуками", size=16, weight=ft.FontWeight.BOLD),
+                    import_btn,
+                    ft.Text("Загруженные звуки:", size=14),
+                    self.sounds_list,
+                ], tight=True, scroll=ft.ScrollMode.AUTO),
+                width=500,
+                height=500,
+                padding=20,
+            ),
+            actions=[
+                ft.TextButton("Отмена", on_click=cancel),
+                ft.ElevatedButton("Сохранить", on_click=save_settings),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        
+        self.page.dialog = self.dialog
+        self.dialog.open = True
+        self.page.update()
+    
+    def on_file_picked(self, e: ft.FilePickerResultEvent):
+        """Обработка выбора файла для импорта"""
+        if e.files:
+            file_path = e.files[0].path
+            
+            # Спрашиваем имя для звука
+            def import_with_name(name: str):
+                success, result = self.sound_manager.import_sound(file_path, name)
+                if success:
+                    self.show_snackbar(f"Звук '{result}' успешно загружен")
+                    self.refresh_sounds_list()
+                    self.update_sound_dropdowns()
+                else:
+                    self.show_snackbar(f"Ошибка: {result}", error=True)
+            
+            # Показываем диалог для ввода имени
+            self.show_name_dialog(
+                "Введите название звука",
+                Path(file_path).stem,
+                import_with_name
+            )
+    
+    def show_name_dialog(self, title: str, default_value: str, callback):
+        """Показать диалог ввода имени"""
+        name_field = ft.TextField(
+            label="Название",
+            value=default_value,
+            autofocus=True,
+        )
+        
+        def on_confirm(e):
+            dialog.open = False
+            self.page.update()
+            callback(name_field.value)
+        
+        def on_cancel(e):
+            dialog.open = False
+            self.page.update()
+        
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=name_field,
+            actions=[
+                ft.TextButton("Отмена", on_click=on_cancel),
+                ft.ElevatedButton("ОК", on_click=on_confirm),
+            ],
+        )
+        
+        self.page.dialog = dialog
+        dialog.open = True
+        self.page.update()
+    
+    def refresh_sounds_list(self):
+        """Обновить список загруженных звуков"""
+        self.sounds_list.controls.clear()
+        
+        for sound in self.sound_manager.get_available_sounds():
+            if sound not in ["Без звука", "Системный звук"]:
+                self.sounds_list.controls.append(
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.icons.AUDIO_FILE, color=ft.colors.BLUE_400),
+                            ft.Text(sound, expand=True),
+                            ft.IconButton(
+                                icon=ft.icons.PLAY_ARROW,
+                                tooltip="Тест",
+                                on_click=lambda _, s=sound: self.test_specific_sound(s),
+                                icon_size=20,
+                            ),
+                            ft.IconButton(
+                                icon=ft.icons.DELETE,
+                                tooltip="Удалить",
+                                on_click=lambda _, s=sound: self.delete_sound(s),
+                                icon_size=20,
+                            ),
+                        ]),
+                        padding=5,
+                        border=ft.border.all(1, ft.colors.GREY_700),
+                        border_radius=5,
+                    )
+                )
+        
+        if not self.sounds_list.controls:
+            self.sounds_list.controls.append(
+                ft.Text("Нет загруженных звуков", color=ft.colors.GREY_500, italic=True)
+            )
+    
+    def update_sound_dropdowns(self):
+        """Обновить выпадающие списки звуков"""
+        available_sounds = self.sound_manager.get_available_sounds()
+        
+        self.alert_sound_dropdown.options = [ft.dropdown.Option(s) for s in available_sounds]
+        self.resolved_sound_dropdown.options = [ft.dropdown.Option(s) for s in available_sounds]
+        
+        # Проверяем, что текущие значения все еще доступны
+        if self.alert_sound_dropdown.value not in available_sounds:
+            self.alert_sound_dropdown.value = "Системный звук"
+        if self.resolved_sound_dropdown.value not in available_sounds:
+            self.resolved_sound_dropdown.value = "Системный звук"
+    
+    def test_sound(self, e):
+        """Тест выбранного звука"""
+        sound = self.alert_sound_dropdown.value
+        self.sound_manager.play_sound(sound, block=True)
+    
+    def test_specific_sound(self, sound_name: str):
+        """Тест конкретного звука"""
+        self.sound_manager.play_sound(sound_name, block=True)
+    
+    def delete_sound(self, sound_name: str):
+        """Удалить звук"""
+        if self.sound_manager.delete_sound(sound_name):
+            self.show_snackbar(f"Звук '{sound_name}' удален")
+            self.refresh_sounds_list()
+            self.update_sound_dropdowns()
+    
+    def show_snackbar(self, message: str, error: bool = False):
+        """Показать всплывающее сообщение"""
+        self.page.show_snackbar(
+            ft.SnackBar(
+                content=ft.Text(message),
+                bgcolor=ft.colors.RED_900 if error else ft.colors.GREEN_900,
+            )
+        )
+
 class AlertApp:
     """Основное GUI приложение"""
     
     def __init__(self, page: ft.Page):
         self.page = page
+        self.sound_manager = SoundManager()
         self.client = AlertClient(self.on_alert_received, self.on_connection_changed)
         self.alerts: Dict[str, Dict[str, Any]] = {}
         self.settings = self.load_settings()
+        
+        # Загружаем настройки звуков
+        self.sound_manager.load_settings(self.settings)
         
         self.setup_page()
         self.create_ui()
@@ -123,7 +479,7 @@ class AlertApp:
         # Автоподключение если есть сохраненные настройки
         if self.settings.get('server_url'):
             self.connect_to_server(self.settings['server_url'])
-        
+    
     def setup_page(self):
         """Настройка страницы"""
         self.page.title = "Grafana Alert Desktop"
@@ -162,6 +518,13 @@ class AlertApp:
             )
         )
         
+        # Кнопка настроек
+        settings_btn = ft.IconButton(
+            icon=ft.icons.SETTINGS,
+            tooltip="Настройки",
+            on_click=self.open_settings,
+        )
+        
         # Статистика
         self.alerts_count = ft.Text("0", size=24, weight=ft.FontWeight.BOLD)
         self.critical_count = ft.Text("0", size=16)
@@ -198,6 +561,7 @@ class AlertApp:
                                 self.connection_status,
                                 self.server_input,
                                 self.connect_btn,
+                                settings_btn,
                             ]),
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         padding=10,
@@ -269,6 +633,16 @@ class AlertApp:
             )
         )
     
+    def open_settings(self, e):
+        """Открыть окно настроек"""
+        settings_dialog = SettingsDialog(self.page, self.sound_manager, self.save_sound_settings)
+        settings_dialog.open()
+    
+    def save_sound_settings(self):
+        """Сохранить настройки звуков"""
+        self.settings.update(self.sound_manager.save_settings())
+        self.save_settings()
+    
     def toggle_connection(self, e):
         """Подключение/отключение от сервера"""
         if not self.client.connected:
@@ -305,7 +679,7 @@ class AlertApp:
     def on_connection_changed(self, connected: bool):
         """Обработка изменения состояния подключения"""
         if connected:
-            self.connection_status.name = ft.cons.WIFI
+            self.connection_status.name = ft.icons.WIFI
             self.connection_status.color = ft.colors.GREEN_400
         else:
             self.connection_status.name = ft.icons.WIFI_OFF
@@ -329,10 +703,12 @@ class AlertApp:
             if alert.get('status') == 'resolved':
                 if alert_id in self.alerts:
                     del self.alerts[alert_id]
-                    self.play_sound(SOUND_RESOLVED)
+                    # Воспроизводим звук разрешения
+                    self.sound_manager.play_sound(self.sound_manager.current_resolved_sound)
             else:
                 self.alerts[alert_id] = alert
-                self.play_sound(SOUND_ALERT)
+                # Воспроизводим звук нового алерта
+                self.sound_manager.play_sound(self.sound_manager.current_alert_sound)
                 self.show_notification(alert)
             
             self.update_alerts_table()
@@ -394,7 +770,7 @@ class AlertApp:
                                 icon_size=20,
                             ),
                             ft.IconButton(
-                                icon=ft.cons.OPEN_IN_BROWSER,
+                                icon=ft.icons.OPEN_IN_BROWSER,
                                 tooltip="Открыть в Grafana",
                                 on_click=lambda _, url=alert.get('generator_url'): self.open_in_browser(url),
                                 icon_size=20,
@@ -417,14 +793,6 @@ class AlertApp:
         
         # Обновляем цвет иконки в трее (если нужно)
         self.update_tray_icon(critical > 0)
-    
-    def play_sound(self, sound_file: str):
-        """Воспроизведение звука"""
-        try:
-            if os.path.exists(sound_file):
-                playsound.playsound(sound_file, block=False)
-        except Exception as e:
-            print(f"Error playing sound: {e}")
     
     def show_notification(self, alert: dict):
         """Показ системного уведомления"""
