@@ -1,0 +1,84 @@
+/* Custom styles for AlertBridge */
+body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Alert severity colors */
+.severity-critical {
+    background-color: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+}
+.severity-high {
+    background-color: rgba(249, 115, 22, 0.2);
+    color: #fb923c;
+}
+.severity-warning {
+    background-color: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+}
+.severity-info {
+    background-color: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+/* Table hover effect */
+#alerts-table-body tr:hover {
+    background-color: rgba(55, 65, 81, 0.5);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #1f2937;
+}
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+/* Modal animation */
+#settings-modal {
+    transition: opacity 0.2s ease;
+}
+#settings-modal .bg-gray-800 {
+    transform: scale(1);
+    transition: transform 0.2s ease;
+}
+#settings-modal.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+#settings-modal.hidden .bg-gray-800 {
+    transform: scale(0.95);
+}
+
+/* Snackbar */
+.snackbar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1f2937;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    animation: slideUp 0.3s ease;
+}
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translate(-50%, 20px);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}

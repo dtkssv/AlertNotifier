@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: alertbridge-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - alertbridge-network
+
+  web:
+    build: .
+    container_name: alertbridge-web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    volumes:
+      - ./static:/app/static
+      - ./media:/app/media
+      - ./db.sqlite3:/app/db.sqlite3
+    networks:
+      - alertbridge-network
+
+volumes:
+  redis-data:
+
+networks:
+  alertbridge-network:
+    driver: bridge

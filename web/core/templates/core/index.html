@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlertBridge - Grafana Alerts</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="container mx-auto px-4 py-6">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-6">
+            <div class="flex items-center space-x-3">
+                <i class="fas fa-bell text-3xl text-blue-400"></i>
+                <h1 class="text-2xl font-bold">AlertBridge</h1>
+                <span class="text-xs bg-gray-800 px-2 py-1 rounded text-gray-400">
+                    <i class="fas fa-cloud mr-1"></i>Веб-версия
+                </span>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                <!-- Connection Status -->
+                <div id="connection-status" class="flex items-center space-x-2">
+                    <i class="fas fa-wifi text-red-500"></i>
+                    <span class="text-sm text-gray-400">Отключено</span>
+                </div>
+                
+                <!-- Server URL Input -->
+                <input type="text" 
+                       id="server-url" 
+                       placeholder="ws://localhost:8081/ws"
+                       class="bg-gray-800 text-white px-3 py-2 rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                
+                <!-- Connect Button -->
+                <button id="connect-btn" 
+                        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-2">
+                    <i class="fas fa-link"></i>
+                    <span>Подключиться</span>
+                </button>
+                
+                <!-- Settings Button -->
+                <button id="settings-btn" 
+                        class="bg-gray-800 hover:bg-gray-700 p-2 rounded-lg transition">
+                    <i class="fas fa-cog"></i>
+                </button>
+                
+                <!-- Stop Sounds Button -->
+                <button id="stop-sounds-btn" 
+                        class="bg-red-600 hover:bg-red-700 p-2 rounded-lg transition">
+                    <i class="fas fa-stop-circle"></i>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4">
+                <div class="text-sm text-gray-400 mb-1">Активные алерты</div>
+                <div id="total-alerts" class="text-3xl font-bold">0</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+                <div class="text-sm text-gray-400 mb-1">Критичные</div>
+                <div id="critical-alerts" class="text-3xl font-bold text-red-500">0</div>
+            </div>
+        </div>
+        
+        <!-- Alerts Table -->
+        <div class="bg-gray-800 rounded-lg overflow-hidden">
+            <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                <h2 class="font-semibold">Активные алерты</h2>
+                <div class="flex items-center space-x-3">
+                    <select id="severity-filter" class="bg-gray-700 text-sm px-3 py-1 rounded">
+                        <option value="all">Все</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="warning">Warning</option>
+                        <option value="info">Info</option>
+                    </select>
+                    <button id="refresh-btn" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-900 text-gray-400 text-sm">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Статус</th>
+                            <th class="px-4 py-3 text-left">Уровень</th>
+                            <th class="px-4 py-3 text-left">Время</th>
+                            <th class="px-4 py-3 text-left">Название</th>
+                            <th class="px-4 py-3 text-left">Инстанс</th>
+                            <th class="px-4 py-3 text-left">Описание</th>
+                            <th class="px-4 py-3 text-left">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-table-body" class="divide-y divide-gray-700">
+                        <!-- Alerts will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+        <div class="bg-gray-800 rounded-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <h3 class="text-xl font-bold mb-4">Настройки</h3>
+                
+                <!-- Sound Settings -->
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold mb-3">Звуковые уведомления</h4>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Звук нового алерта</label>
+                            <select id="alert-sound-select" class="w-full bg-gray-700 text-white px-3 py-2 rounded">
+                                <!-- Options will be populated -->
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Звук разрешенного алерта</label>
+                            <select id="resolved-sound-select" class="w-full bg-gray-700 text-white px-3 py-2 rounded">
+                                <!-- Options will be populated -->
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Громкость (%)</label>
+                            <input type="range" id="volume-slider" min="0" max="100" value="70" 
+                                   class="w-full accent-blue-500">
+                        </div>
+                        
+                       
